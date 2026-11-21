@@ -1,0 +1,26 @@
+{
+  "name": "picode-ask-me",
+  "version": "0.1.0",
+  "description": "Ask the user structured questions through the PiCode host UI. Feasibility port of pi-ask-me onto native plugin capabilities.",
+  "author": "picode-ask-me",
+  "license": "MIT",
+  "keywords": ["picode-plugin", "ask", "question", "clarify", "mcp"],
+  "mcpServers": {
+    "app": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${ZCODE_PLUGIN_ROOT}/src/server.mjs"]
+    }
+  },
+  "contributions": {
+    "schemaVersion": 1,
+    "entries": [
+      {
+        "id": "ask",
+        "kind": "ask",
+        "version": 1,
+        "server": "app"
+      }
+    ]
+  }
+}
