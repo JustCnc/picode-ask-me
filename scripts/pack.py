@@ -28,9 +28,8 @@ ENTRIES = (
     ".picode-plugin/plugin.json",
     "package.json",
     "README.md",
+    "src/native.mjs",
     "src/questions.mjs",
-    "src/rpc.mjs",
-    "src/server.mjs",
 )
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 
@@ -62,7 +61,7 @@ def write_marketplace(out_dir: Path, version: str, zip_name: str, digest: str, b
         "plugins": [
             {
                 "name": "picode-ask-me",
-                "description": "Ask the user structured questions through the PiCode host UI.",
+                "description": "Ask the user structured questions through the PiCode native plugin Host API.",
                 "version": version,
                 "source": {
                     "source": "url",

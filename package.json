@@ -1,12 +1,12 @@
 {
   "name": "picode-ask-me",
-  "version": "0.1.0",
-  "description": "Ask the user 1-4 structured questions through the PiCode host UI, from the `ask_user_question` MCP tool.",
+  "version": "0.2.0",
+  "description": "Ask the user 1-4 structured questions through the PiCode native plugin Host API (ask v2, `ask_user_question`).",
   "license": "MIT",
   "type": "module",
   "private": true,
   "engines": {
-    "node": ">=24"
+    "node": ">=24.14.0 <25"
   },
   "scripts": {
     "test": "node --test \"tests/**/*.test.mjs\"",

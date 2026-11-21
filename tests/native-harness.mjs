@@ -1,7 +1,7 @@
 /**
- * Minimal stdio harness: real child process, newline-delimited JSON-RPC.
- * Keeps every inbound message until a waiter matches it, so out-of-order
- * assertions (an ask, then the tool result) stay readable.
+ * Minimal JSONL harness: real child process, one JSON object per stdout line.
+ * Keeps every inbound message until a waiter matches it, so ordering assertions
+ * (an `ask`, then the terminal `result`) stay readable.
  */
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -9,10 +9,12 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-export const SERVER_PATH = join(ROOT, "src", "server.mjs");
+export const RUNTIME_PATH = join(ROOT, "src", "native.mjs");
 
-export function startServer() {
-  const child = spawn(process.execPath, [SERVER_PATH], { stdio: ["pipe", "pipe", "pipe"] });
+export function startRuntime() {
+  const child = spawn(process.execPath, [RUNTIME_PATH], { stdio: ["pipe", "pipe", "pipe"] });
+  // 子进程收口后宿主仍可能 close stdin：端到端测试里吞掉 EPIPE，不让它变成未处理异常。
+  child.stdin.on("error", () => {});
   const messages = [];
   const waiters = new Set();
   let stderr = "";
@@ -65,57 +67,30 @@ export function startServer() {
   return {
     child,
     send,
-    notify(method, params) {
-      send({ jsonrpc: "2.0", method, ...(params === undefined ? {} : { params }) });
-    },
+    exited,
     nextMessage,
     expectNoMessage,
     get stderr() {
       return stderr;
     },
-    exited,
     get buffered() {
       return messages;
     },
     async close() {
       child.stdin.end();
-      const code = await exited;
-      reader.close();
-      return code;
+      return exited;
     },
   };
 }
 
-export async function withServer(run) {
-  const server = startServer();
+export async function withRuntime(run) {
+  const runtime = startRuntime();
   try {
-    return await run(server);
+    return await run(runtime);
   } finally {
-    if (server.child.exitCode === null) await server.close();
+    if (runtime.child.exitCode === null) {
+      runtime.child.kill();
+      await runtime.close().catch(() => {});
+    }
   }
-}
-
-export async function initialize(server) {
-  server.send({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: {
-      protocolVersion: "2025-11-25",
-      capabilities: {},
-      clientInfo: { name: "pi", version: "0.0.0" },
-    },
-  });
-  const result = await server.nextMessage((message) => message.id === 1);
-  server.notify("notifications/initialized");
-  return result.result;
-}
-
-export function callTool(server, id, args) {
-  server.send({
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: { name: "ask_user_question", arguments: args },
-  });
 }

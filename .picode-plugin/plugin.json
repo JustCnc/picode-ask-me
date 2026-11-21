@@ -1,25 +1,94 @@
 {
   "name": "picode-ask-me",
-  "version": "0.1.0",
-  "description": "Ask the user structured questions through the PiCode host UI. Feasibility port of pi-ask-me onto native plugin capabilities.",
+  "version": "0.2.0",
+  "description": "Ask the user structured questions through the PiCode native plugin Host API (ask v2).",
   "author": "picode-ask-me",
   "license": "MIT",
-  "keywords": ["picode-plugin", "ask", "question", "clarify", "mcp"],
-  "mcpServers": {
-    "app": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["${ZCODE_PLUGIN_ROOT}/src/server.mjs"]
-    }
-  },
+  "keywords": [
+    "picode-plugin",
+    "ask",
+    "question",
+    "clarify",
+    "native-host-api"
+  ],
   "contributions": {
     "schemaVersion": 1,
     "entries": [
       {
         "id": "ask",
         "kind": "ask",
-        "version": 1,
-        "server": "app"
+        "version": 2,
+        "entry": "src/native.mjs",
+        "tool": {
+          "name": "ask_user_question",
+          "description": "Ask the user 1-4 structured questions with 2-4 options each when a missing decision would change what you implement. Pass questions as function parameters (question, header, options[].label, options[].description, options[].preview, multiSelect). Do not send the questionnaire as chat text. The host renders these in its own question UI and returns the chosen answers; wait for the tool result before write/edit/bash. Set multiSelect when several answers can be valid together. Optional options[].preview is a markdown mockup of that one option only, never the other questions or options; it is shown for single-select questions. Do not author Type something. / Other / Next - the host appends its own custom answer row. If you recommend an option, put it first and append (Recommended) to its label. Group all clarifying questions into one call. If the result says the user declined, continue without asking again.",
+          "inputSchema": {
+            "type": "object",
+            "required": [
+              "questions"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "questions": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 4,
+                "description": "Questions to ask (1-4). Group all clarifying questions into one call.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "question",
+                    "options"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "question": {
+                      "type": "string",
+                      "description": "Complete question, ending with ?."
+                    },
+                    "header": {
+                      "type": "string",
+                      "maxLength": 16,
+                      "description": "Short chip, e.g. Scope, Auth."
+                    },
+                    "multiSelect": {
+                      "type": "boolean",
+                      "description": "True when several options can be chosen together."
+                    },
+                    "options": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 4,
+                      "description": "2-4 choices. Do not include Type something. / Other / Next - the host appends them.",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "label"
+                        ],
+                        "additionalProperties": false,
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "maxLength": 60,
+                            "description": "1-5 words. Append (Recommended) to the preferred option and put it first."
+                          },
+                          "description": {
+                            "type": "string",
+                            "description": "What this choice means or costs."
+                          },
+                          "preview": {
+                            "type": "string",
+                            "description": "Optional markdown mockup of this option only. Do not paste other questions or options into it. Ignored for multiSelect."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     ]
   }

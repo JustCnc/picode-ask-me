@@ -1,5 +1,5 @@
 /**
- * Question contract shared by the MCP tool schema, the `picode/ask` request and the
+ * Question contract shared by the ask v2 tool catalog, the `ask` message and the
  * tool-result formatter. Dependency-free so the plugin ships as plain Node ESM.
  *
  * Rules ported from pi-ask-me (src/ask.ts) stay validated — never clamped: a malformed

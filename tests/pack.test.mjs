@@ -63,9 +63,8 @@ describe("packaging", { skip: !hasPython() && "python is unavailable" }, () => {
       ".picode-plugin/plugin.json",
       "package.json",
       "README.md",
+      "src/native.mjs",
       "src/questions.mjs",
-      "src/rpc.mjs",
-      "src/server.mjs",
     ]);
     assert.ok(existsSync(join(out, `picode-ask-me-${version}.zip`)));
   });
