@@ -3,6 +3,15 @@ import { describe, it } from "node:test";
 import {
   ASK_INPUT_SCHEMA,
   formatAskResult,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_HEADER_LENGTH,
+  MAX_LABEL_GUIDE,
+  MAX_LABEL_LENGTH,
+  MAX_OPTIONS,
+  MAX_PREVIEW_LENGTH,
+  MAX_QUESTION_LENGTH,
+  MAX_QUESTIONS,
+  MIN_OPTIONS,
   normalizeQuestions,
   parseAskResponse,
 } from "../src/questions.mjs";
@@ -171,11 +180,114 @@ describe("normalizeQuestions", () => {
     assert.equal(questions[1].options[0].preview, undefined);
   });
 
-  it("exposes the tool schema with the host's question limits", () => {
+  it("advertises the host ceilings in the tool schema", () => {
     assert.deepEqual(ASK_INPUT_SCHEMA.required, ["questions"]);
-    assert.equal(ASK_INPUT_SCHEMA.properties.questions.maxItems, 4);
-    assert.equal(ASK_INPUT_SCHEMA.properties.questions.items.properties.options.minItems, 2);
-    assert.equal(ASK_INPUT_SCHEMA.properties.questions.items.properties.options.maxItems, 4);
+    const questionProps = ASK_INPUT_SCHEMA.properties.questions.items.properties;
+    assert.equal(ASK_INPUT_SCHEMA.properties.questions.maxItems, MAX_QUESTIONS);
+    assert.equal(questionProps.question.maxLength, MAX_QUESTION_LENGTH);
+    assert.equal(questionProps.header.maxLength, MAX_HEADER_LENGTH);
+    assert.equal(questionProps.options.minItems, MIN_OPTIONS);
+    assert.equal(questionProps.options.maxItems, MAX_OPTIONS);
+    // label 两档：schema 广告的是引导长度，运行时的硬上限是宿主那边 200。
+    assert.equal(questionProps.options.items.properties.label.maxLength, MAX_LABEL_GUIDE);
+    assert.ok(MAX_LABEL_GUIDE < MAX_LABEL_LENGTH);
+    assert.equal(
+      questionProps.options.items.properties.description.maxLength,
+      MAX_DESCRIPTION_LENGTH,
+    );
+    assert.equal(questionProps.options.items.properties.preview.maxLength, MAX_PREVIEW_LENGTH);
+  });
+
+  it("accepts a bare questions array and stringified option lists", () => {
+    // 模型直接给数组，或把 options 也字符串化：两条修复路径都走同一套校验。
+    const fromArray = normalizeQuestions(twoQuestions);
+    assert.equal(fromArray.ok, true);
+    const stringifiedOptions = normalizeQuestions({
+      questions: [
+        {
+          question: "哪一项?",
+          options: JSON.stringify([{ label: "A" }, { label: "B" }]),
+        },
+      ],
+    });
+    assert.equal(stringifiedOptions.ok, true);
+    assert.deepEqual(
+      stringifiedOptions.questions[0].options.map((option) => option.label),
+      ["A", "B"],
+    );
+  });
+
+  it("trims the header by code points instead of splitting a surrogate pair", () => {
+    const questions = ask([
+      {
+        question: "哪一项?",
+        header: `😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀`,
+        options: [{ label: "A" }, { label: "B" }],
+      },
+    ]);
+    assert.equal(questions[0].header, "😀".repeat(MAX_HEADER_LENGTH));
+    assert.equal([...questions[0].header].length, MAX_HEADER_LENGTH);
+  });
+
+  it("ignores a multi-select preview instead of validating a dropped field", () => {
+    const result = normalizeQuestions({
+      questions: [
+        {
+          question: "选哪些?",
+          multiSelect: true,
+          options: [{ label: "A", preview: "p".repeat(20_000) }, { label: "B" }],
+        },
+      ],
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.questions[0].options[0].preview, undefined);
+  });
+
+  it("rejects a questionnaire that fits every field but not the host's frame budget", () => {
+    // 上限按 UTF-16 长度算，而宿主按 UTF-8 字节杀帧：3 字节字符拉满每个字段就会超。
+    const preview = "汉".repeat(MAX_PREVIEW_LENGTH);
+    const description = "汉".repeat(MAX_DESCRIPTION_LENGTH);
+    const result = normalizeQuestions({
+      questions: Array.from({ length: MAX_QUESTIONS }, (_, index) => ({
+        question: `第${index}题` + "汉".repeat(MAX_QUESTION_LENGTH - 4),
+        options: ["A", "B", "C", "D"].map((label) => ({ label, description, preview })),
+      })),
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /questionnaire is \d+ bytes/);
+    assert.match(result.message, /at most 1000000/);
+  });
+
+  it("rejects payloads above the host's questionnaire ceilings", () => {
+    const cases = [
+      [
+        { question: "q".repeat(4001), options: [{ label: "A" }, { label: "B" }] },
+        /question exceeds 4000 characters/,
+      ],
+      [
+        { question: "哪一项?", options: [{ label: "L".repeat(201) }, { label: "B" }] },
+        /option label exceeds 200 characters/,
+      ],
+      [
+        {
+          question: "哪一项?",
+          options: [{ label: "A", description: "d".repeat(4001) }, { label: "B" }],
+        },
+        /option description exceeds 4000 characters/,
+      ],
+      [
+        {
+          question: "哪一项?",
+          options: [{ label: "A", preview: "p".repeat(16_001) }, { label: "B" }],
+        },
+        /option preview exceeds 16000 characters/,
+      ],
+    ];
+    for (const [question, pattern] of cases) {
+      const result = normalizeQuestions({ questions: [question] });
+      assert.equal(result.ok, false);
+      assert.match(result.message, pattern);
+    }
   });
 });
 

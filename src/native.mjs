@@ -10,6 +10,10 @@
  *   in  {"type":"answer","result":{"cancelled":true}|{"answers":...}}
  *   out {"type":"result","text":"..."} | {"type":"error","message":"..."}
  *
+ * The host may add fields to the invoke frame (today `sessionId` / `workspaceDir` from its trusted
+ * session context); unknown top-level fields are ignored on purpose — identity always comes from
+ * the host binding, never from this process.
+ *
  * The host owns identity, permission and lifetime: it stops the child (or closes stdin)
  * to cancel. Waiting for the user is unbounded here — no timers, no retries, no timeouts.
  * stdout carries protocol lines only; diagnostics go to stderr.
@@ -107,6 +111,11 @@ export function createNativeRuntime(options = {}) {
     if (!pending) {
       // 迟到的答复（上一调用已收口）不落到本调用上。
       log("dropping answer with no pending question");
+      return;
+    }
+    if (!("result" in message)) {
+      // 宿主保证 answer 带 result：缺了是协议错，不能静默读成「用户没回答」。
+      fail("Error: answer frame carries no result");
       return;
     }
     const questions = pending;

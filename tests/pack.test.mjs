@@ -69,8 +69,29 @@ describe("packaging", { skip: !hasPython() && "python is unavailable" }, () => {
     assert.ok(existsSync(join(out, `picode-ask-me-${version}.zip`)));
   });
 
+  it("rejects --base-url without --marketplace", () => {
+    const out = mkdtempSync(join(tmpdir(), "picode-ask-me-pack-f-"));
+    scratch.push(out);
+    assert.throws(
+      () =>
+        execFileSync("python", [PACK, "--out", out, "--base-url", "http://127.0.0.1:9999"], {
+          stdio: "ignore",
+        }),
+      /Command failed/,
+    );
+    assert.equal(existsSync(join(out, `picode-ask-me-${version}.zip`)), false);
+    assert.equal(existsSync(join(out, "marketplace.json")), false);
+  });
+
+  it("writes no marketplace catalogue unless asked", () => {
+    const { out, stdout } = packInto("e");
+    assert.equal(existsSync(join(out, "marketplace.json")), false);
+    assert.doesNotMatch(stdout, /catalogue: /);
+  });
+
   it("writes a loopback catalogue whose digest matches the archive", () => {
     const { out, zip, sha256, stdout } = packInto("d", [
+      "--marketplace",
       "--base-url",
       "http://127.0.0.1:9999/",
     ]);

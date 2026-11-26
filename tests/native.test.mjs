@@ -129,8 +129,7 @@ describe("picode-ask-me native runtime", () => {
     await withRuntime(async (runtime) => {
       runtime.send({ type: "answer", result: { cancelled: true } });
       runtime.send(invoke([twoQuestions[0]]));
-      const ask = await runtime.nextMessage(isType("ask"));
-      assert.equal(ask.type, "ask");
+      await runtime.nextMessage(isType("ask"));
 
       runtime.send(invoke([twoQuestions[0]]));
       await runtime.expectNoMessage(isType("ask"));
@@ -141,11 +140,54 @@ describe("picode-ask-me native runtime", () => {
     });
   });
 
-  it("waits for the user without a deadline", async () => {
+  it("treats an answer without result as a protocol error", async () => {
     await withRuntime(async (runtime) => {
       runtime.send(invoke([twoQuestions[0]]));
       await runtime.nextMessage(isType("ask"));
-      // 用户思考时间不再受插件侧墙钟限制。
+      // 缺 result 不能静默读成「用户没回答」。
+      runtime.send({ type: "answer" });
+      const error = await runtime.nextMessage(isType("error"));
+      assert.match(error.message, /answer frame carries no result/);
+    });
+  });
+
+  it("tolerates the host's extra invoke fields", async () => {
+    await withRuntime(async (runtime) => {
+      // pi-host spreads its trusted session context onto the invoke frame; an ask binding
+      // normally gets none, so this only proves unknown top-level fields don't break parsing.
+      runtime.send({
+        type: "invoke",
+        version: 1,
+        sessionId: "session-1",
+        workspaceDir: "D:/workspace",
+        args: { questions: [twoQuestions[0]] },
+      });
+      const ask = await runtime.nextMessage(isType("ask"));
+      assert.equal(ask.questions.length, 1);
+      runtime.send({ type: "answer", result: { cancelled: true } });
+      const result = await runtime.nextMessage(isType("result"));
+      assert.match(result.text, /declined/);
+    });
+  });
+
+  it("rejects a questionnaire above the host's ceilings without asking", async () => {
+    await withRuntime(async (runtime) => {
+      // 超过宿主 isQuestionnaire 上限的问卷会被宿主整包拒掉（只有一句 Invalid questions），
+      // 这里先报出可修的错，用户不会被弹一张无效问卷。
+      runtime.send(
+        invoke([{ question: "q".repeat(4001), options: [{ label: "A" }, { label: "B" }] }]),
+      );
+      const error = await runtime.nextMessage(isType("error"));
+      assert.match(error.message, /question exceeds 4000 characters/);
+      await runtime.expectNoMessage(isType("ask"));
+    });
+  });
+
+  it("keeps waiting while the user thinks instead of timing out", async () => {
+    await withRuntime(async (runtime) => {
+      runtime.send(invoke([twoQuestions[0]]));
+      await runtime.nextMessage(isType("ask"));
+      // 插件侧没有定时器：这段暂停之后仍必须能收下答案。
       await new Promise((resolve) => setTimeout(resolve, 1200));
       runtime.send({ type: "answer", result: { cancelled: true } });
       const result = await runtime.nextMessage(isType("result"));

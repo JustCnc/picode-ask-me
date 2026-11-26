@@ -14,7 +14,7 @@ describe("manifest", () => {
   it("declares the ask v2 entry as its sole contribution", () => {
     assert.equal(manifest.name, pkg.name);
     assert.equal(manifest.version, pkg.version);
-    assert.equal(manifest.version, "0.2.0");
+    assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
     assert.equal(manifest.contributions.schemaVersion, 1);
     assert.equal(manifest.contributions.entries.length, 1);
     assert.equal(entry.id, "ask");
@@ -24,6 +24,21 @@ describe("manifest", () => {
     assert.equal(entry.server, undefined);
   });
 
+  it("declares the localized metadata the settings list reads", () => {
+    // pi-host reads displayName / displayNameI18n / descriptionI18n off the manifest.
+    assert.equal(typeof manifest.displayName, "string");
+    assert.ok(manifest.displayName.trim().length > 0);
+    for (const key of ["displayNameI18n", "descriptionI18n"]) {
+      const map = manifest[key];
+      assert.deepEqual(Object.keys(map).sort(), ["en-US", "zh-CN"]);
+      for (const value of Object.values(map)) {
+        assert.equal(typeof value, "string");
+        assert.ok(value.trim().length > 0);
+      }
+    }
+    assert.equal(manifest.descriptionI18n["en-US"], manifest.description);
+  });
+
   it("does not ship an MCP server", () => {
     // ask v2 永不走 MCP 兼容链路：清单里不该再有 server 声明。
     assert.equal(manifest.mcpServers, undefined);
@@ -31,7 +46,6 @@ describe("manifest", () => {
   });
 
   it("keeps the entry inside the packaged plugin root", () => {
-    assert.doesNotMatch(entry.entry, /^[/\\]|\.\./);
     assert.match(entry.entry, /^src\/[A-Za-z0-9_.-]+\.mjs$/);
     assert.ok(existsSync(join(ROOT, entry.entry)));
   });

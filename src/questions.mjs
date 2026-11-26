@@ -4,6 +4,8 @@
  *
  * Rules ported from pi-ask-me (src/ask.ts) stay validated — never clamped: a malformed
  * questionnaire is an error the model can fix, not something the plugin quietly rewrites.
+ * The one cosmetic exception is `header`: it is a chip label, so it is trimmed to
+ * MAX_HEADER_LENGTH code points instead of failing the call.
  */
 
 export const ASK_TOOL_NAME = "ask_user_question";
@@ -11,6 +13,26 @@ export const MAX_QUESTIONS = 4;
 export const MIN_OPTIONS = 2;
 export const MAX_OPTIONS = 4;
 export const MAX_HEADER_LENGTH = 16;
+/** Advertised label guidance ("1-5 words"); the hard ceiling is MAX_LABEL_LENGTH. */
+export const MAX_LABEL_GUIDE = 60;
+
+/**
+ * Host-side ceilings: `isQuestionnaire` in PiCode's `pi-host/native-plugin-tool-host.ts`
+ * rejects anything above these before the questionnaire reaches the UI, answering the tool with
+ * a bare "Invalid questions from native plugin". Rejecting here first turns that into an error
+ * the model can fix.
+ */
+export const MAX_QUESTION_LENGTH = 4000;
+export const MAX_LABEL_LENGTH = 200;
+export const MAX_DESCRIPTION_LENGTH = 4000;
+export const MAX_PREVIEW_LENGTH = 16_000;
+
+/**
+ * Whole-frame budget. Every field above can be within its own ceiling and the aggregated `ask`
+ * line still exceed the host's `MAX_FRAME_BYTES` (1 MiB), which the host kills at the protocol
+ * layer. Kept just under 1 MiB so the envelope and JSON escaping fit.
+ */
+export const MAX_PAYLOAD_BYTES = 1_000_000;
 
 /** Labels the host appends itself; authoring them collides with the host's custom row. */
 const RESERVED_LABELS = new Set(["other", "type something.", "next", "自己输入"]);
@@ -41,7 +63,11 @@ export const ASK_INPUT_SCHEMA = {
         required: ["question", "options"],
         additionalProperties: false,
         properties: {
-          question: { type: "string", description: "Complete question, ending with ?." },
+          question: {
+            type: "string",
+            maxLength: MAX_QUESTION_LENGTH,
+            description: "Complete question, ending with ?.",
+          },
           header: {
             type: "string",
             maxLength: MAX_HEADER_LENGTH,
@@ -64,13 +90,18 @@ export const ASK_INPUT_SCHEMA = {
               properties: {
                 label: {
                   type: "string",
-                  maxLength: 60,
+                  maxLength: MAX_LABEL_GUIDE,
                   description:
                     "1-5 words. Append (Recommended) to the preferred option and put it first.",
                 },
-                description: { type: "string", description: "What this choice means or costs." },
+                description: {
+                  type: "string",
+                  maxLength: MAX_DESCRIPTION_LENGTH,
+                  description: "What this choice means or costs.",
+                },
                 preview: {
                   type: "string",
+                  maxLength: MAX_PREVIEW_LENGTH,
                   description:
                     "Optional markdown mockup of this option only. Do not paste other questions or options into it. Ignored for multiSelect.",
                 },
@@ -142,7 +173,13 @@ export function normalizeQuestions(input) {
     }
     const question = entry.question.trim();
     if (!question) return { ok: false, message: "Error: each question needs text" };
-    // 宿主以题目原文作为 answers 记录的键：两道同文题会互相覆盖，答案归错题。
+    if (question.length > MAX_QUESTION_LENGTH) {
+      return {
+        ok: false,
+        message: `Error: question exceeds ${MAX_QUESTION_LENGTH} characters`,
+      };
+    }
+    // 宿主以题目原文作 answers 记录的键：完全同文的两题会互相覆盖。大小写也一并拒绝，比宿主更严。
     const questionKey = question.toLowerCase();
     if (questionTexts.has(questionKey)) {
       return { ok: false, message: `Error: duplicate question ${JSON.stringify(question)}` };
@@ -167,6 +204,9 @@ export function normalizeQuestions(input) {
       }
       const label = raw.label.trim();
       if (!label) return { ok: false, message: "Error: option label required" };
+      if (label.length > MAX_LABEL_LENGTH) {
+        return { ok: false, message: `Error: option label exceeds ${MAX_LABEL_LENGTH} characters` };
+      }
       if (RESERVED_LABELS.has(label.toLowerCase())) {
         return {
           ok: false,
@@ -180,10 +220,26 @@ export function normalizeQuestions(input) {
       seen.add(key);
       const description = optionalText(raw.description, "option description");
       if (!description.ok) return { ok: false, message: description.message };
-      const rawPreview = optionalText(raw.preview, "option preview");
-      if (!rawPreview.ok) return { ok: false, message: rawPreview.message };
+      if (description.text.length > MAX_DESCRIPTION_LENGTH) {
+        return {
+          ok: false,
+          message: `Error: option description exceeds ${MAX_DESCRIPTION_LENGTH} characters`,
+        };
+      }
       // 与旧包一致：preview 是单选选项的示意稿，多选时不发送（选择组合无法对应单张示意）。
-      const preview = multiSelect ? "" : rawPreview.text;
+      // 注定被丢弃的字段不校验，否则模型会收到一条针对它根本没用的字段的报错。
+      let preview = "";
+      if (!multiSelect) {
+        const rawPreview = optionalText(raw.preview, "option preview");
+        if (!rawPreview.ok) return { ok: false, message: rawPreview.message };
+        if (rawPreview.text.length > MAX_PREVIEW_LENGTH) {
+          return {
+            ok: false,
+            message: `Error: option preview exceeds ${MAX_PREVIEW_LENGTH} characters`,
+          };
+        }
+        preview = rawPreview.text;
+      }
       options.push({
         label,
         ...(description.text ? { description: description.text } : {}),
@@ -193,7 +249,8 @@ export function normalizeQuestions(input) {
 
     const header = optionalText(entry.header, "header");
     if (!header.ok) return { ok: false, message: header.message };
-    const chip = header.text.slice(0, MAX_HEADER_LENGTH);
+    // 按码点切，不按 UTF-16 单元：emoji 被切成半个代理对会变成非法字符。
+    const chip = [...header.text].slice(0, MAX_HEADER_LENGTH).join("");
     out.push({
       question,
       options,
@@ -215,6 +272,15 @@ export function normalizeQuestions(input) {
         delete option.preview;
       }
     }
+  }
+
+  // 逐字段都合法也可能整帧超宿主上限：宿主按字节杀整行，这里先报可修的错。
+  const bytes = Buffer.byteLength(JSON.stringify(out), "utf8");
+  if (bytes > MAX_PAYLOAD_BYTES) {
+    return {
+      ok: false,
+      message: `Error: questionnaire is ${bytes} bytes; the host accepts at most ${MAX_PAYLOAD_BYTES}`,
+    };
   }
 
   return { ok: true, questions: out };
